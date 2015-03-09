@@ -42,10 +42,10 @@ class Subtitles:
 		self.md5sum = md5
 
 def filterVideoFiles(iterable):
-	return filter(lambda x: (".mkv" or ".avi" or ".mp4") in os.path.splitext(x), iterable)
+	return filter(lambda x: os.path.splitext(x)[1] in (".mkv", ".avi", ".mp4"), iterable)
 
 def filterArchiveFiles(iterable):
-	return filter(lambda x: ".rar" in os.path.splitext(x), iterable)
+	return filter(lambda x: os.path.splitext(x)[1] in (".rar",), iterable)
 
 class Filesys:
 	def __init__(self, paths):
