@@ -258,7 +258,7 @@ class NapiProjekt(object):
                 _subtitles = base64.b64decode(
                     cNodes[0].getElementsByTagName("subtitles")[0].getElementsByTagName("content")[0].childNodes[
                         0].data)
-                with open(self.name, "w") as subtitlesfile:
+                with open(self.name, "wb") as subtitlesfile:
                     subtitlesfile.write(_subtitles)
                 return True
         except Exception, e:
