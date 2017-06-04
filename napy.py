@@ -20,21 +20,21 @@
 #     along with napy; if not, see http://www.gnu.org/licenses/
 #
 
+import base64
+import hashlib
 import os
 import sys
+import urllib
+import zipfile
+from xml.dom import minidom
 
 import rarfile
-import zipfile
-
-import md5
-import urllib, base64
-from xml.dom import minidom
 
 rarfile.NEED_COMMENTS = 0
 
 
 class Subtitles:
-    '''Class contain data required for querying NapiProjekt for subtitles'''
+    """Class contain data required for querying NapiProjekt for subtitles"""
 
     def __init__(self, omf, f, md5=None):
         self.original_movie_file = omf
@@ -105,7 +105,7 @@ class Filesys:
     def calculatemd5(self, data):
         if len(data) > 10 * 1024 * 1024:
             raise ValueError("Invalid data size (bigger than 10MiB")
-        md5sum = md5.new()
+        md5sum = hashlib.new("md5")
         md5sum.update(data)
         md5hash = md5sum.hexdigest()
         return md5hash
@@ -139,7 +139,7 @@ class Filesys:
 
 
 class NapiProjekt(object):
-    '''Modified class from https://github.com/Miziak/NapiTux/blob/master/NapiProjekt.py'''
+    """Modified class from https://github.com/Miziak/NapiTux/blob/master/NapiProjekt.py"""
 
     def __init__(self, filename, md5):
         self.info = {}
@@ -209,16 +209,16 @@ class NapiProjekt(object):
                 self.info["title"] = cNodes[0].getElementsByTagName("title")[0].childNodes[0].data
                 self.info["year"] = cNodes[0].getElementsByTagName("year")[0].childNodes[0].data
                 self.info["country"] = \
-                cNodes[0].getElementsByTagName("country")[0].getElementsByTagName("pl")[0].childNodes[0].data
+                    cNodes[0].getElementsByTagName("country")[0].getElementsByTagName("pl")[0].childNodes[0].data
                 if (cNodes[0].getElementsByTagName("genre")[0].getElementsByTagName("pl")[0].childNodes != []):
                     self.info["genre"] = \
-                    cNodes[0].getElementsByTagName("genre")[0].getElementsByTagName("pl")[0].childNodes[0].data
+                        cNodes[0].getElementsByTagName("genre")[0].getElementsByTagName("pl")[0].childNodes[0].data
                 else:
                     self.info["genre"] = ""
 
                 self.info["filmweb"] = \
-                cNodes[0].getElementsByTagName("direct_links")[0].getElementsByTagName("filmweb_pl")[0].childNodes[
-                    0].data
+                    cNodes[0].getElementsByTagName("direct_links")[0].getElementsByTagName("filmweb_pl")[0].childNodes[
+                        0].data
 
                 cNodes = DOMTree.childNodes[0].getElementsByTagName("file_info")
 
