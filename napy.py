@@ -21,6 +21,7 @@
 #
 
 import base64
+import glob
 import hashlib
 import os
 import sys
@@ -54,53 +55,54 @@ class Filesys:
     def __init__(self, paths):
         self.to_process = []
 
-        for f in paths:
+        for p in paths:
+            for f in glob.iglob(p):
 
-            absolute_f = os.path.realpath(os.path.join(os.curdir, f))
-            print absolute_f
+                absolute_f = os.path.realpath(os.path.join(os.curdir, f))
+                # print absolute_f
 
-            if os.path.isfile(absolute_f):
-                if rarfile.is_rarfile(absolute_f):
-                    # rar file
-                    self.to_process.extend(self.processRarFile(absolute_f))
+                if os.path.isfile(absolute_f):
+                    if rarfile.is_rarfile(absolute_f):
+                        # rar file
+                        self.to_process.extend(self.processRarFile(absolute_f))
 
-                elif zipfile.is_zipfile(absolute_f):
-                    # zip file
-                    raise NotImplemented("Zip file handle is not implemented yet.")
+                    elif zipfile.is_zipfile(absolute_f):
+                        # zip file
+                        raise NotImplemented("Zip file handle is not implemented yet.")
 
-                else:
-                    # raw file
-                    self.to_process.extend(self.processRawFile(absolute_f))
+                    else:
+                        # raw file
+                        self.to_process.extend(self.processRawFile(absolute_f))
 
-            elif os.path.isdir(absolute_f):
-                # directory
-                for rootdir, dirname, filename in os.walk(absolute_f):
-                    rawfiles = filterVideoFiles(filename)
-                    for i in rawfiles:
-                        print rootdir + os.sep + i
-                        self.to_process.extend(self.processRawFile(rootdir + os.sep + i))
+                elif os.path.isdir(absolute_f):
+                    # directory
+                    for rootdir, dirname, filename in os.walk(absolute_f):
+                        rawfiles = filterVideoFiles(filename)
+                        for i in rawfiles:
+                            print rootdir + os.sep + i
+                            self.to_process.extend(self.processRawFile(rootdir + os.sep + i))
 
-                    rarfiles = filterArchiveFiles(filename)
-                    for i in rarfiles:
-                        print rootdir + os.sep + i
-                        self.to_process.extend(self.processRarFile(rootdir + os.sep + i))
+                        rarfiles = filterArchiveFiles(filename)
+                        for i in rarfiles:
+                            print rootdir + os.sep + i
+                            self.to_process.extend(self.processRarFile(rootdir + os.sep + i))
 
-            # get subtitles
-            for subtitle_item in self.to_process:
-                print subtitle_item.md5sum, subtitle_item.original_movie_file
-                napi = NapiProjekt(subtitle_item.subtitles_save_path, subtitle_item.md5sum)
-                if napi.downloadSubtitles(False):
-                    print "    + Pobrano napisy PL"
-                    napi.getMoreInfo()
-                elif napi.downloadSubtitles(True):
-                    print "    + Pobrano napisy ENG"
-                    napi.getMoreInfo()
-                else:
-                    print "    - NIE POBRANO NAPISOW"
-                for k, v in napi.info.iteritems():
-                    print "     ", k, ":", v
+                # get subtitles
+                for subtitle_item in self.to_process:
+                    print subtitle_item.md5sum, subtitle_item.original_movie_file
+                    napi = NapiProjekt(subtitle_item.subtitles_save_path, subtitle_item.md5sum)
+                    if napi.downloadSubtitles(False):
+                        print "    + Pobrano napisy PL"
+                        napi.getMoreInfo()
+                    elif napi.downloadSubtitles(True):
+                        print "    + Pobrano napisy ENG"
+                        napi.getMoreInfo()
+                    else:
+                        print "    - NIE POBRANO NAPISOW"
+                    for k, v in napi.info.iteritems():
+                        print "     ", k, ":", v
 
-            self.to_process = []
+                self.to_process = []
 
     def calculatemd5(self, data):
         if len(data) > 10 * 1024 * 1024:
