@@ -24,12 +24,15 @@ import base64
 import glob
 import hashlib
 import os
+import struct
 import sys
 import urllib
 import zipfile
+import StringIO
 from xml.dom import minidom
 
 import rarfile
+import requests
 
 rarfile.NEED_COMMENTS = 0
 
@@ -37,10 +40,11 @@ rarfile.NEED_COMMENTS = 0
 class Subtitles:
     """Class contain data required for querying NapiProjekt for subtitles"""
 
-    def __init__(self, omf, f, md5=None):
+    def __init__(self, omf, f, md5=None, opensub=None):
         self.original_movie_file = omf
         self.subtitles_save_path = f
         self.md5sum = md5
+        self.opensub_hash = opensub
 
 
 def filterVideoFiles(iterable):
@@ -53,7 +57,7 @@ def filterArchiveFiles(iterable):
 
 class Filesys:
     def __init__(self, paths):
-        self.to_process = []
+        self.to_process = []  # list[Subtitles]
 
         for p in paths:
             for f in glob.iglob(p):
@@ -102,6 +106,12 @@ class Filesys:
                     for k, v in napi.info.iteritems():
                         print "     ", k, ":", v
 
+                    napisy24 = Napisy24(subtitle_item.subtitles_save_path, subtitle_item.opensub_hash)
+                    if napisy24.downloadSubtitles():
+                        print "    + Pobrano napisy PL (napisy24)"
+                    else:
+                        print "    - NIE POBRANO NAPISOW (napisy24)"
+
                 self.to_process = []
 
     def calculatemd5(self, data):
@@ -124,10 +134,12 @@ class Filesys:
         for video_item in video_list:
             partrarf = rarf.open(video_item)
             md5hash = self.calculatemd5(partrarf.read(10485760))
+            opensub_hash = Napisy24.opensubtitle_hash(partrarf)
             print "  [rar]md5:", md5hash
+            print "  [rar]opensub:", opensub_hash
             files_to_process.append(Subtitles((os.path.dirname(path) + os.sep + video_item),
                                               os.path.splitext(os.path.dirname(path) + os.sep + video_item)[0] + ".txt",
-                                              md5hash))
+                                              md5hash, opensub_hash))
 
         return files_to_process
 
@@ -135,9 +147,78 @@ class Filesys:
         if len(filterVideoFiles([path])) < 1:
             return []
 
-        md5hash = self.calculatemd5(open(path, "rb").read(10485760))
-        print "  [raw]md5:", md5hash
-        return [Subtitles(path, os.path.splitext(path)[0] + ".txt", md5hash)]
+        with open(path, "rb") as fh:
+            md5hash = self.calculatemd5(fh.read(10485760))
+            opensub_hash = Napisy24.opensubtitle_hash(fh)
+            print "  [raw]md5:", md5hash
+            print "  [raw]opensub:", opensub_hash
+            return [Subtitles(path, os.path.splitext(path)[0] + ".txt", md5hash, opensub_hash)]
+
+
+class Napisy24(object):
+    def __init__(self, filename, opensub_hash):
+        self.name = filename
+        self.file_hash = opensub_hash
+
+    @staticmethod
+    def opensubtitle_hash(fh):
+        """
+        :param file fh: file handler to opened file
+        :return:
+        """
+        longlongformat = '<q'  # little-endian long long
+        bytesize = struct.calcsize(longlongformat)
+
+        fh.seek(0, os.SEEK_END)
+        filesize = fh.tell()
+        # filesize = os.path.getsize(fh)
+        fh.seek(0, os.SEEK_SET)
+
+        hash_value = filesize
+
+        if filesize < 65536 * 2:
+            raise "SizeError"
+
+        for x in xrange(65536 / bytesize):
+            buf = fh.read(bytesize)
+            (l_value,) = struct.unpack(longlongformat, buf)
+            hash_value += l_value
+            hash_value = hash_value & 0xFFFFFFFFFFFFFFFF  # to remain as 64bit number
+
+        fh.seek(max(0, filesize - 65536), 0)
+        for x in xrange(65536 / bytesize):
+            buf = fh.read(bytesize)
+            (l_value,) = struct.unpack(longlongformat, buf)
+            hash_value += l_value
+            hash_value = hash_value & 0xFFFFFFFFFFFFFFFF
+
+        returnedhash_value = "%016x" % hash_value
+        return returnedhash_value, filesize
+
+    def downloadSubtitles(self):
+        # credentials from https://github.com/QNapi/qnapi
+        username = "tantalosus"
+        password = "susolatnat"
+
+        creds = {"postAction": "CheckSub", "ua": username, "ap": password, "fh": self.file_hash[0],
+                 "fs": self.file_hash[1], "fn": self.name}
+
+        r = requests.post("http://napisy24.pl/run/CheckSubAgent.php", data=creds)
+        info, subtitles_zip = r.content.split("||", 1)
+        # print info
+
+        # "srt", "sub", "txt"
+        if info.startswith("OK-2"):
+            szf = StringIO.StringIO(subtitles_zip)
+            with zipfile.ZipFile(szf, "r") as zf:
+                subtitles = filter(lambda x: os.path.splitext(x.filename)[1] in (".srt", ".sub", ".txt"), zf.infolist())
+                for i in subtitles:
+                    file_name, file_ext = os.path.splitext(i.filename)
+                    with open(self.name + "_n24" + file_ext, "wb") as fw:
+                        fw.write(zf.read(i))
+            return True
+
+        return False
 
 
 class NapiProjekt(object):
@@ -147,14 +228,14 @@ class NapiProjekt(object):
         self.info = {}
         self.name = filename
         self.url = "http://napiprojekt.pl/api/api-napiprojekt3.php"
-        self.md5hash = md5
+        self.file_hash = md5
 
     def downloadSubtitles(self, eng=False):
         values = {
             "mode": "1",
             "client": "NapiProjektPython",
             "client_ver": "0.1",
-            "downloaded_subtitles_id": self.md5hash,
+            "downloaded_subtitles_id": self.file_hash,
             "downloaded_subtitles_txt": "1",
             "downloaded_subtitles_lang": "PL"
         }
@@ -191,8 +272,8 @@ class NapiProjekt(object):
             "mode": "32770",
             "client": "NapiProjektPython",
             "client_ver": "0.1",
-            "downloaded_cover_id": self.md5hash,
-            "VideoFileInfoID": self.md5hash
+            "downloaded_cover_id": self.file_hash,
+            "VideoFileInfoID": self.file_hash
         }
 
         data = urllib.urlencode(values)
