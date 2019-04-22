@@ -4,7 +4,7 @@
 #
 #     Copyright:
 #     This file is part of napy.
-#     Copyright (C) 2014-2015 chris3k
+#     Copyright (C) 2014-2019 chris3k
 #
 #     napy is free software; you can redistribute it and/or modify
 #     it under the terms of the GNU General Public License as published by
@@ -54,14 +54,62 @@ def filterVideoFiles(iterable):
 def filterArchiveFiles(iterable):
     return filter(lambda x: os.path.splitext(x)[1] in (".rar",), iterable)
 
+def process_http(url):
+    r = requests.head(url)
+    file_size = r.headers.get("Content-Length")
+
+    buffer = []
+    headers = {"Range": "bytes=0-10485759"}
+    r = requests.get(url, headers=headers)
+    buffer.append(r.content)
+
+    headers = {"Range": "bytes={}-".format(int(file_size) - 65536)}
+    r = requests.get(url, headers=headers)
+    buffer.append(r.content)
+
+    return file_size, buffer
+
+def get_subtitles(items):
+    for subtitle_item in items:
+        print subtitle_item.md5sum, subtitle_item.original_movie_file
+        napi = NapiProjekt(subtitle_item.subtitles_save_path, subtitle_item.md5sum)
+        if napi.downloadSubtitles(False):
+            print "    + Pobrano napisy PL"
+            napi.getMoreInfo()
+        elif napi.downloadSubtitles(True):
+            print "    + Pobrano napisy ENG"
+            napi.getMoreInfo()
+        else:
+            print "    - NIE POBRANO NAPISOW"
+        for k, v in napi.info.iteritems():
+            print "     ", k, ":", v
+
+        napisy24 = Napisy24(subtitle_item.subtitles_save_path, subtitle_item.opensub_hash)
+        if napisy24.downloadSubtitles():
+            print "    + Pobrano napisy PL (napisy24)"
+        else:
+            print "    - NIE POBRANO NAPISOW (napisy24)"
+
 
 class Filesys:
     def __init__(self, paths):
         self.to_process = []  # list[Subtitles]
 
         for p in paths:
-            for f in glob.iglob(p):
+            if p.startswith("http://") or p.startswith("https://"):
+                file_size_, buffer = process_http(p)
+                file_size = int(file_size_)
+                md5hash = self.calculatemd5(buffer[0])
+                opensub_hash = Napisy24.buffer_hash(file_size, buffer)
+                movie_name = p.rsplit("/", 1)[1]
+                movie_subtitles_name = os.path.splitext(movie_name)[0] + ".txt"
+                self.to_process.append(Subtitles(movie_name, movie_subtitles_name, md5hash, opensub_hash))
 
+                get_subtitles(self.to_process)
+                self.to_process = []
+                break
+
+            for f in glob.iglob(p):
                 absolute_f = os.path.realpath(os.path.join(os.curdir, f))
                 # print absolute_f
 
@@ -92,26 +140,7 @@ class Filesys:
                             self.to_process.extend(self.processRarFile(rootdir + os.sep + i))
 
                 # get subtitles
-                for subtitle_item in self.to_process:
-                    print subtitle_item.md5sum, subtitle_item.original_movie_file
-                    napi = NapiProjekt(subtitle_item.subtitles_save_path, subtitle_item.md5sum)
-                    if napi.downloadSubtitles(False):
-                        print "    + Pobrano napisy PL"
-                        napi.getMoreInfo()
-                    elif napi.downloadSubtitles(True):
-                        print "    + Pobrano napisy ENG"
-                        napi.getMoreInfo()
-                    else:
-                        print "    - NIE POBRANO NAPISOW"
-                    for k, v in napi.info.iteritems():
-                        print "     ", k, ":", v
-
-                    napisy24 = Napisy24(subtitle_item.subtitles_save_path, subtitle_item.opensub_hash)
-                    if napisy24.downloadSubtitles():
-                        print "    + Pobrano napisy PL (napisy24)"
-                    else:
-                        print "    - NIE POBRANO NAPISOW (napisy24)"
-
+                get_subtitles(self.to_process)
                 self.to_process = []
 
     def calculatemd5(self, data):
@@ -161,39 +190,55 @@ class Napisy24(object):
         self.file_hash = opensub_hash
 
     @staticmethod
+    def file_size(fh):
+        fh.seek(0, os.SEEK_END)
+        filesize = fh.tell()
+        # filesize = os.path.getsize(fh)
+        fh.seek(0, os.SEEK_SET)
+        return filesize
+
+    @staticmethod
     def opensubtitle_hash(fh):
         """
         :param file fh: file handler to opened file
         :return:
         """
-        longlongformat = '<q'  # little-endian long long
-        bytesize = struct.calcsize(longlongformat)
-
-        fh.seek(0, os.SEEK_END)
-        filesize = fh.tell()
-        # filesize = os.path.getsize(fh)
-        fh.seek(0, os.SEEK_SET)
-
-        hash_value = filesize
-
+        filesize = Napisy24.file_size(fh)
         if filesize < 65536 * 2:
             raise "SizeError"
 
+        buffer = []
+        fh.seek(0, os.SEEK_SET)
+        buffer.append(fh.read(65536))
+
+        fh.seek(max(0, filesize - 65536), os.SEEK_SET)
+        buffer.append(fh.read(65536))
+
+        assert len(buffer[0]) == 65536, "buffer[0] is " + str(len(buffer[0]))
+        assert len(buffer[1]) == 65536, "buffer[1] is " + str(len(buffer[1]))
+
+        opensubs_hash = Napisy24.buffer_hash(filesize, buffer)
+        return opensubs_hash, filesize
+
+    @staticmethod
+    def buffer_hash(file_size, buffer):
+        longlongformat = '<q'  # little-endian long long
+        bytesize = struct.calcsize(longlongformat)
+        hash_value = file_size
         for x in xrange(65536 / bytesize):
-            buf = fh.read(bytesize)
+            buf = buffer[0][x*8:(x+1)*8]
             (l_value,) = struct.unpack(longlongformat, buf)
             hash_value += l_value
             hash_value = hash_value & 0xFFFFFFFFFFFFFFFF  # to remain as 64bit number
 
-        fh.seek(max(0, filesize - 65536), 0)
         for x in xrange(65536 / bytesize):
-            buf = fh.read(bytesize)
+            buf = buffer[1][x*8:(x+1)*8]
             (l_value,) = struct.unpack(longlongformat, buf)
             hash_value += l_value
             hash_value = hash_value & 0xFFFFFFFFFFFFFFFF
 
-        returnedhash_value = "%016x" % hash_value
-        return returnedhash_value, filesize
+        hash_value = "%016x" % hash_value
+        return hash_value
 
     def downloadSubtitles(self):
         # credentials from https://github.com/QNapi/qnapi
