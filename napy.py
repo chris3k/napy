@@ -1,4 +1,4 @@
-#!/usr/bin/env python2.7
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
 #
@@ -26,9 +26,8 @@ import hashlib
 import os
 import struct
 import sys
-import urllib
 import zipfile
-import StringIO
+import io
 from xml.dom import minidom
 
 import rarfile
@@ -71,24 +70,24 @@ def process_http(url):
 
 def get_subtitles(items):
     for subtitle_item in items:
-        print subtitle_item.md5sum, subtitle_item.original_movie_file
+        print(subtitle_item.md5sum, subtitle_item.original_movie_file)
         napi = NapiProjekt(subtitle_item.subtitles_save_path, subtitle_item.md5sum)
         if napi.downloadSubtitles(False):
-            print "    + Pobrano napisy PL"
+            print("    + Pobrano napisy PL")
             napi.getMoreInfo()
         elif napi.downloadSubtitles(True):
-            print "    + Pobrano napisy ENG"
+            print("    + Pobrano napisy ENG")
             napi.getMoreInfo()
         else:
-            print "    - NIE POBRANO NAPISOW"
-        for k, v in napi.info.iteritems():
-            print "     ", k, ":", v
+            print("    - NIE POBRANO NAPISOW")
+        for k, v in napi.info.items():
+            print("     ", k, ":", v)
 
         napisy24 = Napisy24(subtitle_item.subtitles_save_path, subtitle_item.opensub_hash)
         if napisy24.downloadSubtitles():
-            print "    + Pobrano napisy PL (napisy24)"
+            print("    + Pobrano napisy PL (napisy24)")
         else:
-            print "    - NIE POBRANO NAPISOW (napisy24)"
+            print("    - NIE POBRANO NAPISOW (napisy24)")
 
 
 class Filesys:
@@ -120,7 +119,7 @@ class Filesys:
 
                     elif zipfile.is_zipfile(absolute_f):
                         # zip file
-                        raise NotImplemented("Zip file handle is not implemented yet.")
+                        raise NotImplementedError("Zip file handle is not implemented yet.")
 
                     else:
                         # raw file
@@ -131,12 +130,12 @@ class Filesys:
                     for rootdir, dirname, filename in os.walk(absolute_f):
                         rawfiles = filterVideoFiles(filename)
                         for i in rawfiles:
-                            print rootdir + os.sep + i
+                            print(rootdir + os.sep + i)
                             self.to_process.extend(self.processRawFile(rootdir + os.sep + i))
 
                         rarfiles = filterArchiveFiles(filename)
                         for i in rarfiles:
-                            print rootdir + os.sep + i
+                            print(rootdir + os.sep + i)
                             self.to_process.extend(self.processRarFile(rootdir + os.sep + i))
 
                 # get subtitles
@@ -153,7 +152,7 @@ class Filesys:
 
     def processRarFile(self, path):
         if not rarfile.is_rarfile(path):
-            print path, "is not a valid rar file"
+            print(path, "is not a valid rar file")
             return []
 
         rarf = rarfile.RarFile(path)
@@ -164,8 +163,8 @@ class Filesys:
             partrarf = rarf.open(video_item)
             md5hash = self.calculatemd5(partrarf.read(10485760))
             opensub_hash = Napisy24.opensubtitle_hash(partrarf)
-            print "  [rar]md5:", md5hash
-            print "  [rar]opensub:", opensub_hash
+            print("  [rar]md5:", md5hash)
+            print("  [rar]opensub:", opensub_hash)
             files_to_process.append(Subtitles((os.path.dirname(path) + os.sep + video_item),
                                               os.path.splitext(os.path.dirname(path) + os.sep + video_item)[0] + ".txt",
                                               md5hash, opensub_hash))
@@ -173,14 +172,14 @@ class Filesys:
         return files_to_process
 
     def processRawFile(self, path):
-        if len(filterVideoFiles([path])) < 1:
+        if len(list(filterVideoFiles([path]))) < 1:
             return []
 
         with open(path, "rb") as fh:
             md5hash = self.calculatemd5(fh.read(10485760))
             opensub_hash = Napisy24.opensubtitle_hash(fh)
-            print "  [raw]md5:", md5hash
-            print "  [raw]opensub:", opensub_hash
+            print("  [raw]md5:", md5hash)
+            print("  [raw]opensub:", opensub_hash)
             return [Subtitles(path, os.path.splitext(path)[0] + ".txt", md5hash, opensub_hash)]
 
 
@@ -225,13 +224,13 @@ class Napisy24(object):
         longlongformat = '<q'  # little-endian long long
         bytesize = struct.calcsize(longlongformat)
         hash_value = file_size
-        for x in xrange(65536 / bytesize):
+        for x in range(65536 // bytesize):
             buf = buffer[0][x*8:(x+1)*8]
             (l_value,) = struct.unpack(longlongformat, buf)
             hash_value += l_value
             hash_value = hash_value & 0xFFFFFFFFFFFFFFFF  # to remain as 64bit number
 
-        for x in xrange(65536 / bytesize):
+        for x in range(65536 // bytesize):
             buf = buffer[1][x*8:(x+1)*8]
             (l_value,) = struct.unpack(longlongformat, buf)
             hash_value += l_value
@@ -249,21 +248,26 @@ class Napisy24(object):
                  "fs": self.file_hash[1], "fn": self.name}
 
         r = requests.post("http://napisy24.pl/run/CheckSubAgent.php", data=creds)
-        info, subtitles_zip = r.content.split("||", 1)
-        # print info
+        content = r.content
+        if not content.startswith(b"OK-2"):
+            return False
+
+        split_point = content.find(b"||")
+        if split_point == -1:
+            return False
+
+        info, subtitles_zip = content[:split_point], content[split_point + len("||"):]
+        # print(info)
 
         # "srt", "sub", "txt"
-        if info.startswith("OK-2"):
-            szf = StringIO.StringIO(subtitles_zip)
-            with zipfile.ZipFile(szf, "r") as zf:
-                subtitles = filter(lambda x: os.path.splitext(x.filename)[1] in (".srt", ".sub", ".txt"), zf.infolist())
-                for i in subtitles:
-                    file_name, file_ext = os.path.splitext(i.filename)
-                    with open(self.name + "_n24" + file_ext, "wb") as fw:
-                        fw.write(zf.read(i))
-            return True
-
-        return False
+        szf = io.BytesIO(subtitles_zip)
+        with zipfile.ZipFile(szf, "r") as zf:
+            subtitles = filter(lambda x: os.path.splitext(x.filename)[1] in (".srt", ".sub", ".txt"), zf.infolist())
+            for i in subtitles:
+                file_name, file_ext = os.path.splitext(i.filename)
+                with open(self.name + "_n24" + file_ext, "wb") as fw:
+                    fw.write(zf.read(i))
+        return True
 
 
 class NapiProjekt(object):
@@ -288,16 +292,15 @@ class NapiProjekt(object):
         if eng:
             values["downloaded_subtitles_lang"] = "ENG"
 
-        data = urllib.urlencode(values)
-        try:
-            response = urllib.urlopen(self.url, data)
-        except IOError, e:
-            sys.stderr.write("ERROR: %s\n" % e)
+        r = requests.post(self.url, data=values)
+        if r.status_code != requests.codes.ok:
+            sys.stderr.write("{} error={}\n".format(self.url, r.status_code))
             return False
+        response = r.text
+        # print(response)
 
         try:
-            DOMTree = minidom.parseString(response.read())
-
+            DOMTree = minidom.parseString(response)
             cNodes = DOMTree.childNodes
             if cNodes[0].getElementsByTagName("status") != []:
                 _subtitles = base64.b64decode(
@@ -306,7 +309,7 @@ class NapiProjekt(object):
                 with open(self.name, "wb") as subtitlesfile:
                     subtitlesfile.write(_subtitles)
                 return True
-        except Exception, e:
+        except Exception as e:
             sys.stderr.write("ERROR: %s\n" % e)
             return False
 
@@ -321,16 +324,16 @@ class NapiProjekt(object):
             "VideoFileInfoID": self.file_hash
         }
 
-        data = urllib.urlencode(values)
-        try:
-            response = urllib.urlopen(self.url, data)
-        except IOError, e:
-            sys.stderr.write("ERROR: %s\n" % e)
+        r = requests.post(self.url, data=values)
+        if r.status_code != requests.codes.ok:
+            sys.stderr.write("ERROR: Cannot GET %s\n" % self.url)
             return False
+        response = r.text
+        # print(response)
+        # return
 
         try:
-            res = response.read()
-            DOMTree = minidom.parseString(res)
+            DOMTree = minidom.parseString(response)
             cNodes = DOMTree.childNodes[0].getElementsByTagName("movie")
 
             if cNodes[0].getElementsByTagName("status") != []:
@@ -356,13 +359,14 @@ class NapiProjekt(object):
                 self.info["resolution"] = cNodes[0].getElementsByTagName("rozdz_X")[0].childNodes[0].data + "x" + \
                                           cNodes[0].getElementsByTagName("rozdz_Y")[0].childNodes[0].data
                 self.info["fps"] = cNodes[0].getElementsByTagName("fps")[0].childNodes[0].data
-        except Exception, e:
+        except Exception as e:
+            print(self.info)
             sys.stderr.write("ERROR: %s\n" % e)
             return False
 
 
 def _help():
-    print "Usage: " + sys.argv[0] + " <mkv|mp4|avi|rar file path> [[<mkv|mp4|avi|rar file path>],...]"
+    print("Usage: " + sys.argv[0] + " <mkv|mp4|avi|rar file path> [[<mkv|mp4|avi|rar file path>],...]")
 
 
 def main():
